@@ -708,13 +708,21 @@ function approvedRunnerArtifact(
 function authorizedToolSet(
   tools: readonly Readonly<Record<string, unknown>>[],
 ): Record<string, unknown> {
-  const operations = tools.map((tool) => ({
-    operationId: String(tool.name ?? ""),
-    version: 1,
-    description: String(tool.description ?? ""),
-    inputSchema: record(tool.inputSchema),
-    responseSchema: {},
-  }));
+  const operations = tools
+    .map((tool) => ({
+      operationId: String(tool.name ?? ""),
+      version: 1,
+      description: String(tool.description ?? ""),
+      inputSchema: record(tool.inputSchema),
+      responseSchema: {},
+    }))
+    .sort((left, right) =>
+      left.operationId < right.operationId
+        ? -1
+        : left.operationId > right.operationId
+          ? 1
+          : 0,
+    );
   return {
     schema: "paperclip.runner.authorized-tools.v1",
     schemaVersion: 1,

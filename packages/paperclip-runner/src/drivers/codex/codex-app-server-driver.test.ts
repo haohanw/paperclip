@@ -2266,18 +2266,22 @@ describe("Codex app-server Codex driver", () => {
     }
     expect(created).not.toBeNull();
 
-    await expect(session.handoffRuntimeRequest?.({
+    const firstHandoff = session.handoffRuntimeRequest!({
       requestId: "handoff-input",
       turnId,
       reason: "durable_handoff",
       signal: new AbortController().signal,
-    })).resolves.toBe("handed_off");
-    await expect(session.handoffRuntimeRequest?.({
+    });
+    expect(firstHandoff.result).toBe("handed_off");
+    await expect(firstHandoff.cleanup).resolves.toBeUndefined();
+    const repeatedHandoff = session.handoffRuntimeRequest!({
       requestId: "handoff-input",
       turnId,
       reason: "durable_handoff",
       signal: new AbortController().signal,
-    })).resolves.toBe("already_settled");
+    });
+    expect(repeatedHandoff.result).toBe("already_settled");
+    await expect(repeatedHandoff.cleanup).resolves.toBeUndefined();
     expect(await pending).toEqual({ answers: {} });
 
     let expired: PrpEvent | null = null;
@@ -2353,12 +2357,14 @@ describe("Codex app-server Codex driver", () => {
       },
     });
     await Promise.resolve();
-    await expect(session.handoffRuntimeRequest?.({
+    const handoff = session.handoffRuntimeRequest!({
       requestId: "race-input",
       turnId,
       reason: "durable_handoff",
       signal: new AbortController().signal,
-    })).resolves.toBe("already_settled");
+    });
+    expect(handoff.result).toBe("already_settled");
+    await expect(handoff.cleanup).resolves.toBeUndefined();
     releaseResolution();
     await resolution;
     await providerRequest;

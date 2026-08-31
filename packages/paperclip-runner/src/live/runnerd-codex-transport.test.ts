@@ -384,6 +384,14 @@ const fakeCodex = resolve(
   "../../runner/target/debug/fake-codex-app-server",
 );
 
+function fakeCodexArgs(stateDirectory: string, ...args: string[]): string[] {
+  return [
+    "--state-file",
+    join(stateDirectory, "fake-codex-state.json"),
+    ...args,
+  ];
+}
+
 function assignedRuntimeContext(skillRoot: string, instructionRoot: string): NativeRuntimeContextSnapshot {
   const digest = "0".repeat(64);
   const value = {
@@ -478,10 +486,12 @@ it("expands coalesced canonical items without dropping strict bindings", () => {
 });
 
 it("runs the lab provider boundary through authenticated durable PRP", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-lab-provider-"));
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: [],
+    codexArgs: fakeCodexArgs(stateDirectory),
+    stateDirectory,
   });
   bundle.transport.setServerRequestHandler(async (request) => ({
     success: true,
@@ -527,13 +537,14 @@ it("runs the lab provider boundary through authenticated durable PRP", async () 
     expect(methods).toContain("turn/completed");
     expect(terminalParams).toMatchObject({
       threadId: opened.thread.id,
-      turnId: "fake-turn",
+      turnId: "provider-turn-1",
     });
     expect(bundle.evidence().diagnostics).toContain(
       "runnerd authenticated to the durable PRP control plane",
     );
   } finally {
     await bundle.transport.close();
+    await rm(stateDirectory, { recursive: true, force: true });
   }
   expect(bundle.evidence()).toMatchObject({
     runnerExited: true,
@@ -542,10 +553,12 @@ it("runs the lab provider boundary through authenticated durable PRP", async () 
 }, 30_000);
 
 it("bridges a runnerd-native question into the server request handler and resolves it canonically", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-runtime-question-"));
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: ["--runtime-question"],
+    codexArgs: fakeCodexArgs(stateDirectory, "--runtime-question"),
+    stateDirectory,
   });
   let bridgedRequest: { method: string; params: Record<string, unknown> } | null = null;
   bundle.transport.setServerRequestHandler(async (request) => {
@@ -562,7 +575,7 @@ it("bridges a runnerd-native question into the server request handler and resolv
           schema: "paperclip.question_response.v1",
           answers: {
             environment: { selectedOptionIds: ["option-1"] },
-            regions: { selectedOptionIds: ["option-1", "option-2"] },
+            regions: { selectedOptionIds: ["option-1"] },
             notes: { text: "Ship during the maintenance window." },
           },
         },
@@ -593,49 +606,33 @@ it("bridges a runnerd-native question into the server request handler and resolv
     expect(bridgedRequest).toMatchObject({
       method: "item/tool/requestUserInput",
       params: {
-        threadId: "fake-thread",
+        threadId: "codex-thread-1",
         questions: [
           expect.objectContaining({ id: "environment", isOther: true }),
-          expect.objectContaining({ id: "regions", multiSelect: true }),
-          expect.objectContaining({ id: "notes", required: false }),
+          expect.objectContaining({ id: "regions", required: true }),
+          expect.objectContaining({ id: "notes", required: true }),
         ],
       },
     });
     expect(methods).toContain("turn/completed");
   } finally {
     await bundle.transport.close();
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 }, 30_000);
 
-it("bridges a runnerd-native form elicitation and preserves typed provider content", async () => {
+it("fails closed for runnerd-native form elicitation until the Rust bridge preserves typed provider content", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-runtime-elicitation-"));
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: ["--runtime-elicitation"],
+    codexArgs: fakeCodexArgs(stateDirectory, "--runtime-elicitation"),
+    stateDirectory,
   });
   let bridgedRequest: { method: string; params: Record<string, unknown> } | null = null;
   bundle.transport.setServerRequestHandler(async (request) => {
-    if (request.method !== "mcpServer/elicitation/request") {
-      return { success: true, contentItems: [] };
-    }
     bridgedRequest = { method: request.method, params: request.params };
-    await bundle.transport.resolveRuntimeRequest?.({
-      requestId: String(request.id),
-      turnId: String(request.params.turnId),
-      resolution: {
-        action: "submit",
-        response: {
-          schema: "paperclip.question_response.v1",
-          answers: {
-            environment: { selectedOptionIds: ["option-1"] },
-            regions: { selectedOptionIds: ["option-1", "option-2"] },
-            replicas: { text: "3" },
-            approved: { selectedOptionIds: ["true"] },
-          },
-        },
-      },
-    });
-    return { action: "accept", content: {}, _meta: null };
+    return { success: true, contentItems: [] };
   });
   try {
     await bundle.transport.request("initialize", {});
@@ -655,24 +652,11 @@ it("bridges a runnerd-native form elicitation and preserves typed provider conte
       methods.push(notification.method);
       if (notification.method === "turn/completed") break;
     }
-    expect(bridgedRequest).toMatchObject({
-      method: "mcpServer/elicitation/request",
-      params: {
-        message: "Choose typed deployment settings.",
-        requestedSchema: {
-          required: ["approved", "environment", "regions", "replicas"],
-          properties: {
-            environment: expect.objectContaining({ type: "string" }),
-            regions: expect.objectContaining({ type: "array" }),
-            replicas: expect.objectContaining({ type: "integer", minimum: 1, maximum: 10 }),
-            approved: expect.objectContaining({ type: "boolean" }),
-          },
-        },
-      },
-    });
+    expect(bridgedRequest).toBeNull();
     expect(methods).toContain("turn/completed");
   } finally {
     await bundle.transport.close();
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 }, 30_000);
 
@@ -684,7 +668,10 @@ it("captures exact provider frames and correlates Rust and TypeScript interpreta
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: ["--structured-activity"],
+    codexArgs: fakeCodexArgs(
+      traceDirectory,
+      "--structured-activity",
+    ),
     stateDirectory: join(traceDirectory, "state"),
     environment: {
       PAPERCLIP_PROVIDER_TRACE_PATH: tracePath,
@@ -781,7 +768,7 @@ it("captures exact provider frames and correlates Rust and TypeScript interpreta
   );
   expect(
     rehydratedEntries.find(
-      (entry) => entry.ruleId === "runnerd.rehydrate.workspace.change.updated",
+      (entry) => entry.ruleId === "runnerd.rehydrate.plan.updated",
     ),
   ).toMatchObject({
     stage: "typescript_runnerd_rehydration",
@@ -816,10 +803,12 @@ it("captures exact provider frames and correlates Rust and TypeScript interpreta
 }, 30_000);
 
 it("steers the active provider turn through the durable PRP command path", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-steering-"));
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: ["--linger-after-turn-start"],
+    codexArgs: fakeCodexArgs(stateDirectory, "--linger-after-turn-start"),
+    stateDirectory,
   });
   bundle.transport.setServerRequestHandler(async () => ({
     success: true,
@@ -891,14 +880,17 @@ it("steers the active provider turn through the durable PRP command path", async
     expect(acknowledged).toBe(true);
   } finally {
     await bundle.transport.close();
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 }, 30_000);
 
 it("attaches a second governed run to one warm runner and provider process", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-warm-attach-"));
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: [],
+    codexArgs: fakeCodexArgs(stateDirectory),
+    stateDirectory,
     lifecyclePolicy: { mode: "warm", idleTimeoutMs: 60_000 },
   });
   bundle.transport.setServerRequestHandler(async () => ({
@@ -964,6 +956,7 @@ it("attaches a second governed run to one warm runner and provider process", asy
     });
   } finally {
     await bundle.transport.close();
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 }, 30_000);
 
@@ -985,7 +978,11 @@ it("cold-restores a suspended provider session under a new run binding", async (
   const options = {
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: ["--include-skill-instructions"],
+    codexArgs: fakeCodexArgs(
+      stateDirectory,
+      "--include-skill-instructions",
+      "--durable-turn-ids",
+    ),
     stateDirectory,
     lifecyclePolicy: { mode: "per_turn" as const, idleTimeoutMs: null },
     runtimeContext: assignedRuntimeContext(skillRoot, instructionRoot),
@@ -1061,7 +1058,7 @@ it("cold-restores a suspended provider session under a new run binding", async (
   }));
   try {
     const read = await restored.transport.request("thread/read", {});
-    expect(read.thread).toMatchObject({ id: "fake-thread" });
+    expect(read.thread).toMatchObject({ id: "codex-thread-1" });
     expect((await stat(join(stateDirectory, "codex-home", "skills", "assigned"))).mode & 0o222).toBe(0);
     expect((await stat(join(stateDirectory, "codex-home", "skills", "assigned", "SKILL.md"))).mode & 0o222).toBe(0);
     const durable = JSON.parse(
@@ -1146,10 +1143,12 @@ it("surfaces a runner exit while provider-ingress readiness is still pending", a
 });
 
 it("rejects the notification stream promptly when runnerd exits after accepting a turn", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-exit-stream-"));
   const bundle = createCapabilityRunnerdCodexTransport({
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: ["--linger-after-turn-start"],
+    codexArgs: fakeCodexArgs(stateDirectory, "--linger-after-turn-start"),
+    stateDirectory,
   });
   bundle.transport.setServerRequestHandler(async () => ({
     success: true,
@@ -1194,5 +1193,6 @@ it("rejects the notification stream promptly when runnerd exits after accepting 
     ).rejects.toThrow("native_runner_process_exited");
   } finally {
     await bundle.transport.close();
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 }, 30_000);
