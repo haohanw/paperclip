@@ -338,7 +338,7 @@
     },
     {
       "path": "fixtures/replay/golden/source-gap.snapshot.json",
-      "sha256": "4795595971d29b4d52c31063911c8dbfa9860997f98e7f16cd34decccf49992e",
+      "sha256": "7db7f25e423a721e60adfcdfee02db6d5e6fcd4a644ee180f5e29810ebbc0d78",
       "expectation": "accept",
       "compatibilityCase": "deterministic-replay-oracle"
     },
