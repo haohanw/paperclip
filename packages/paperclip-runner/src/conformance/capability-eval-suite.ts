@@ -159,10 +159,10 @@ function assertInventory(inventory: CapabilityEvalInventory): void {
 async function runCase(row: CapabilityEvalRow): Promise<CapabilityEvalCaseResult> {
   const plan = operationPlan(row);
   const { adapter, runtime } = await runtimeFor(plan.grants);
-  const before = adapter.serialize();
+  const beforeRevision = adapter.snapshot().revision;
   let semanticOperation: string;
   let authorizationDecision: string;
-  let after: string;
+  let afterRevision: number;
 
   if (row.primaryDisposition === "control_plane_owned") {
     semanticOperation = "checkout_task";
@@ -171,7 +171,7 @@ async function runCase(row: CapabilityEvalRow): Promise<CapabilityEvalCaseResult
       throw failure(row, semanticOperation, result.authorization.outcome, ["control-plane operation was exposed"]);
     }
     authorizationDecision = result.authorization.outcome;
-    after = adapter.serialize();
+    afterRevision = adapter.snapshot().revision;
   } else if (row.primaryDisposition === "always_agent_tool") {
     semanticOperation = plan.operationId;
     const result = await runtime.invoke({
@@ -183,8 +183,10 @@ async function runCase(row: CapabilityEvalRow): Promise<CapabilityEvalCaseResult
       throw failure(row, semanticOperation, result.authorization.outcome, ["always-agent operation was not allowed"]);
     }
     authorizationDecision = result.authorization.outcome;
-    after = adapter.serialize();
-    if (after === before) throw failure(row, semanticOperation, authorizationDecision, ["expected mock state mutation was absent"]);
+    afterRevision = adapter.snapshot().revision;
+    if (afterRevision === beforeRevision) {
+      throw failure(row, semanticOperation, authorizationDecision, ["expected mock state mutation was absent"]);
+    }
   } else {
     semanticOperation = plan.operationId;
     const result = await runtime.invoke({ operationId: semanticOperation, input: plan.input, idempotencyKey: `capability:${row.id}` });
@@ -192,7 +194,7 @@ async function runCase(row: CapabilityEvalRow): Promise<CapabilityEvalCaseResult
       throw failure(row, semanticOperation, result.authorization.outcome, ["granted optional operation was not allowed"]);
     }
     authorizationDecision = result.authorization.outcome;
-    after = adapter.serialize();
+    afterRevision = adapter.snapshot().revision;
     const denied = await runtimeFor();
     const deniedBefore = denied.adapter.serialize();
     const deniedResult = await denied.runtime.invoke({ operationId: semanticOperation, input: plan.input, idempotencyKey: `capability:denied:${row.id}` });
@@ -201,7 +203,7 @@ async function runCase(row: CapabilityEvalRow): Promise<CapabilityEvalCaseResult
     }
   }
 
-  const stateDiff = before === after ? [] : ["mock_state.revision"];
+  const stateDiff = beforeRevision === afterRevision ? [] : ["mock_state.revision"];
   const expectedState = operationMutatesState(semanticOperation) ? "mutated" : "unchanged";
   if (row.assertionClasses.includes("restraint_no_call") && stateDiff.length !== 0) {
     throw failure(row, semanticOperation, authorizationDecision, stateDiff);

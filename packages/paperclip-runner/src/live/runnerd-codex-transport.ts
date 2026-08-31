@@ -51,6 +51,7 @@ const executableSuffix = process.platform === "win32" ? ".exe" : "";
 const MAX_NOTIFICATION_COUNT = 2_048;
 const MAX_NOTIFICATION_BYTES = 4 * 1024 * 1024;
 const RUNNER_CLIENT_VERSION = "0.3.0";
+const RUNNER_BOOTSTRAP_TICKET_TTL_MS = 60_000;
 
 const CODEX_COLLABORATION_RUNTIME_INSTRUCTIONS = `## Codex-style collaboration
 
@@ -1497,7 +1498,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       stateDirectory:
         this.options.runnerStateDirectory ?? resolve(this.#root, "runner"),
       identity,
-      ticket: core.issueBootstrapTicket(120_000),
+      ticket: core.issueBootstrapTicket(RUNNER_BOOTSTRAP_TICKET_TTL_MS),
       maxOutboxBytes: 256 * 1024,
       p0ReserveBytes: 64 * 1024,
       maxRuntimeMs: 60 * 60 * 1_000,
@@ -1660,7 +1661,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       stateDirectory:
         this.options.runnerStateDirectory ?? resolve(this.#root, "runner"),
       identity,
-      ticket: core.issueBootstrapTicket(120_000),
+      ticket: core.issueBootstrapTicket(RUNNER_BOOTSTRAP_TICKET_TTL_MS),
       maxOutboxBytes: 256 * 1024,
       p0ReserveBytes: 64 * 1024,
       maxRuntimeMs: 60 * 60 * 1_000,
@@ -2251,7 +2252,9 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
         const priorConnectionCount = this.#core.store.state.connectionCount;
         let recoveredHandle: RunnerProcessHandle;
         try {
-          recoveredHandle = restart(this.#core.issueBootstrapTicket(120_000));
+          recoveredHandle = restart(
+            this.#core.issueBootstrapTicket(RUNNER_BOOTSTRAP_TICKET_TTL_MS),
+          );
         } catch (error) {
           lastDetail = error instanceof Error ? error.message : String(error);
           attempt += 1;

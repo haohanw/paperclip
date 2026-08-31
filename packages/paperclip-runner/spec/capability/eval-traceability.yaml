@@ -2395,7 +2395,11 @@
         "combined_multi_hop"
       ],
       "evidenceIds": [
-        "eval:rf-cskill-audit-01"
+        "eval:rf-cskill-audit-01",
+        "mcp:paperclipListSkills"
+      ],
+      "legacyMcpAliases": [
+        "mcp:paperclipListSkills"
       ]
     },
     {

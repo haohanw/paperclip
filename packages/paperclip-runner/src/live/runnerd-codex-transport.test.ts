@@ -134,8 +134,8 @@ it.each([
   },
   {
     agent: "codex" as const,
-    allowed: ["OPENAI_API_KEY", "CODEX_API_KEY", "PAPERCLIP_ACPX_CODEX_AUTH_JSON_SECRET"],
-    denied: ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
+    allowed: ["OPENAI_API_KEY", "CODEX_API_KEY"],
+    denied: ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "PAPERCLIP_ACPX_CODEX_AUTH_JSON_SECRET"],
   },
 ])("passes only $agent ACPX credentials and the durable runtime binding", ({ agent, allowed, denied }) => {
   const credentialEnvironment: Record<string, string> = {

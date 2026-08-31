@@ -34,6 +34,7 @@ const legacyMcpFoldTargets = {
   paperclipMe: "eval:hb-inbox-lite-01",
   paperclipInboxLite: "eval:hb-inbox-lite-01",
   paperclipListAgents: "eval:rf-api-mgr-heartbeat-01",
+  paperclipListSkills: "eval:rf-cskill-audit-01",
   paperclipGetAgent: "eval:rf-api-mgr-heartbeat-01",
   paperclipListIssues: "eval:se-q-filters-01",
   paperclipGetIssue: "eval:se-get-issue-01",
@@ -246,7 +247,7 @@ export async function buildMcpInventory(repoRoot) {
 
 export function validateInventories(inventories) {
   const errors = [];
-  const expectedCounts = { capabilities: 152, evaluations: 106, legacyMcpAliases: 41 };
+  const expectedCounts = { capabilities: 152, evaluations: 106, legacyMcpAliases: 42 };
   const normativeNames = ["capabilities", "evaluations"];
   const normativeRows = new Map();
   const globalNormativeIds = new Set();

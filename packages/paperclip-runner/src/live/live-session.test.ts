@@ -404,7 +404,8 @@ describe("Capability live runnerd and Codex session", () => {
       schema: "paperclip.workspace.file_reference.v1",
       source: "runner_verified",
       path: "guide.md",
-      preview: "# Dynamic guide\n\nVerified by the runner.\n",
+      preview: null,
+      contentDigest: null,
     });
     await service.shutdown(session.id);
   });

@@ -68,7 +68,7 @@
     "typecheck:rust": "cargo fmt --manifest-path runner/Cargo.toml --all -- --check && cargo check --manifest-path runner/Cargo.toml --locked --workspace",
     "typecheck:browser": "tsc -p tsconfig.browser.json --noEmit",
     "test": "pnpm run test:typescript && pnpm run test:rust",
-    "test:typescript": "node --test test/protocol-contract.test.mjs test/acpx-sidecar-contract.test.mjs test/acpx-codex-package-contract.test.mjs && vitest run",
+    "test:typescript": "pnpm run build:rust && node --test test/protocol-contract.test.mjs test/acpx-sidecar-contract.test.mjs test/acpx-codex-package-contract.test.mjs && vitest run",
     "test:rust": "cargo test --release --manifest-path runner/Cargo.toml --locked --workspace",
     "test:codex": "cargo test --manifest-path runner/Cargo.toml --locked -p paperclip-runner-core --test codex_provider",
     "test:durable": "cargo test --manifest-path runner/Cargo.toml --locked -p paperclip-runner-core durable::",

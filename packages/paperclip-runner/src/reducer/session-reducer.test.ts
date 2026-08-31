@@ -77,7 +77,9 @@ describe("deterministic PRP session reducer", () => {
         sourceKey: "runner:runner_replay",
         expected: 3,
         received: 4,
+        missingCount: 1,
         missing: [3],
+        truncated: false,
       },
     ]);
   });
