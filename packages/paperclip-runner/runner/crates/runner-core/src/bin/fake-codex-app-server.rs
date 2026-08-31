@@ -440,12 +440,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let call_log = argument(&args, "--call-log").map(PathBuf::from);
     let emit_question = args.iter().any(|value| value == "--emit-question");
     let emit_runtime_question = args.iter().any(|value| value == "--runtime-question");
-    let emit_runtime_elicitation = args
-        .iter()
-        .any(|value| value == "--runtime-elicitation");
-    let emit_structured_activity = args
-        .iter()
-        .any(|value| value == "--structured-activity");
+    let emit_runtime_elicitation = args.iter().any(|value| value == "--runtime-elicitation");
+    let emit_structured_activity = args.iter().any(|value| value == "--structured-activity");
     let require_skill_instructions = args
         .iter()
         .any(|value| value == "--include-skill-instructions");
@@ -480,8 +476,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let linger_after_turn_start = args
         .iter()
         .any(|value| value == "--linger-after-turn-start");
-    let hold_turn = args.iter().any(|value| value == "--hold-turn")
-        || linger_after_turn_start;
+    let hold_turn = args.iter().any(|value| value == "--hold-turn") || linger_after_turn_start;
     let exit_after_turn_start = args.iter().any(|value| value == "--exit-after-turn-start");
     let exit_after_turn_completion = args
         .iter()

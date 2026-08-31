@@ -2074,7 +2074,14 @@ export class CapabilityLiveSession {
         message: redactCodexDiagnostic(String(error)),
       });
       this.#rejectTurn(error);
-      await this.#persist();
+      try {
+        await this.#persist();
+      } catch {
+        // The original provider or notification failure already rejected the
+        // active turn. Persisting that failed state is best effort: #persist
+        // repairs its serialization queue so a later transition can retry the
+        // latest snapshot, and this background pump must not reject unobserved.
+      }
     }
   }
 
