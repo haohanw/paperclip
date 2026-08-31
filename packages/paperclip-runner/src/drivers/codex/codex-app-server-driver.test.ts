@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -46,8 +47,8 @@ import {
   type CodexTraceInterpretation,
 } from "./app-server-transport.js";
 
-const TEST_WORKING_DIRECTORY = fileURLToPath(
-  new URL("../../../", import.meta.url),
+const TEST_WORKING_DIRECTORY = resolvePath(
+  fileURLToPath(new URL("../../../", import.meta.url)),
 );
 
 class TestQueue<T> implements AsyncIterable<T> {
@@ -2269,11 +2270,13 @@ describe("Codex app-server Codex driver", () => {
       requestId: "handoff-input",
       turnId,
       reason: "durable_handoff",
+      signal: new AbortController().signal,
     })).resolves.toBe("handed_off");
     await expect(session.handoffRuntimeRequest?.({
       requestId: "handoff-input",
       turnId,
       reason: "durable_handoff",
+      signal: new AbortController().signal,
     })).resolves.toBe("already_settled");
     expect(await pending).toEqual({ answers: {} });
 
@@ -2354,6 +2357,7 @@ describe("Codex app-server Codex driver", () => {
       requestId: "race-input",
       turnId,
       reason: "durable_handoff",
+      signal: new AbortController().signal,
     })).resolves.toBe("already_settled");
     releaseResolution();
     await resolution;
@@ -3612,7 +3616,7 @@ describe("Codex app-server Codex driver", () => {
       rejected.trace.events.find((event) => event.eventType === "run.terminal")
         ?.payload,
     ).toMatchObject({
-      runTerminalState: "succeeded",
+      runTerminalState: "failed",
       reportedWorkDisposition: "yielded",
     });
 

@@ -1420,6 +1420,9 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
         provider === "acpx"
               ? {
                   kind: "acpx",
+                  provider: "acpx",
+                  driver: "acpx_runtime",
+                  providerVersion: acpxProfile!.acpxVersion,
                   agent: acpxProfile!.agent,
                   model: requestedModel,
                   acpxVersion: acpxProfile!.acpxVersion,
@@ -1443,6 +1446,15 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
                 }
               : {
                   kind: provider,
+                  provider,
+                  driver:
+                    provider === "opencode"
+                      ? "opencode_server"
+                      : "codex_app_server",
+                  providerVersion:
+                    provider === "opencode"
+                      ? "1.18.17"
+                      : "codex-app-server-v1",
                   command:
                     provider === "opencode"
                       ? providerNodeCommand
