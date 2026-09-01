@@ -1212,17 +1212,19 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
     if (this.#closed) return;
     this.#closed = true;
     if (this.#core !== null && this.#handle !== null) {
-      const perTurnAlreadySuspending =
-        (this.options.lifecyclePolicy?.mode ?? "per_turn") === "per_turn" &&
-        this.#core.store.state.committedEvents.some(
-          (event) =>
-            event.eventType === "runner.suspending" ||
-            event.eventType === "turn.completed" ||
-            event.eventType === "turn.failed" ||
-            event.eventType === "turn.interrupted" ||
-            event.eventType === "turn.cancelled",
+      const runnerAlreadyStopping =
+        this.#handle.child.exitCode !== null ||
+        this.#core.store.state.commands.some(
+          (command) =>
+            (command.type === "runner.suspend" ||
+              command.type === "runner.shutdown") &&
+            command.status === "pending",
         );
-      if (!perTurnAlreadySuspending) {
+      // A terminal provider event settles the turn, but it does not stop the
+      // runner process. Close therefore needs an explicit lifecycle command
+      // unless one is already pending or the process has exited. Completed
+      // lifecycle commands can belong to an earlier restored runner process.
+      if (!runnerAlreadyStopping) {
         this.#core.queueCommand("runner.suspend", {}, undefined, true);
       }
       try {
@@ -1267,10 +1269,12 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
     if (this.#pump !== null) clearInterval(this.#pump);
     this.#pump = null;
     this.#queue.close();
+    // Ensure a runner that missed or could not finish the graceful lifecycle
+    // command cannot keep the control-plane server alive during teardown.
+    this.#handle?.child.kill("SIGKILL");
     if (this.#controlPlaneRelease !== null) await this.#controlPlaneRelease();
     await this.#core?.stop();
     this.#controlPlaneRelease = null;
-    this.#handle?.child.kill("SIGKILL");
     if (this.#ownsRoot) rmSync(this.#root, { recursive: true, force: true });
     this.#publish();
   }
