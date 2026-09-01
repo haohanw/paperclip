@@ -1702,8 +1702,16 @@ export class CapabilityLiveSession {
   }
 
   async suspend(reason = "session suspended"): Promise<void> {
-    if (this.#status === "closed" || this.#status === "failed" || this.#status === "suspended") return;
+    if (this.#status === "closed" || this.#status === "suspended") return;
     this.#clearIdleTimer();
+    if (this.#status === "failed") {
+      // The notification pump may have failed to persist this state after a
+      // transient store error. Its serialization queue is repaired, so a
+      // suspend/shutdown boundary must retry the latest snapshot without
+      // changing the authoritative failed status.
+      await this.#persist();
+      return;
+    }
     this.#status = "suspending";
     await this.#persist();
     await this.#disconnect(reason);
