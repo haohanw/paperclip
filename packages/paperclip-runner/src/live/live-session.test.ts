@@ -303,6 +303,8 @@ class TransientFailureLiveSessionStore implements CapabilityLiveSessionStore {
   readonly #delegate = new InMemoryCapabilityLiveSessionStore();
   #failNextSave = false;
   #terminalSaveFailuresRemaining = 0;
+  #rejectTerminalSaves = false;
+  #terminalSaveFailureCount = 0;
 
   failNextSave(): void {
     this.#failNextSave = true;
@@ -310,6 +312,18 @@ class TransientFailureLiveSessionStore implements CapabilityLiveSessionStore {
 
   failNextTerminalSave(count = 1): void {
     this.#terminalSaveFailuresRemaining = count;
+  }
+
+  rejectTerminalSaves(): void {
+    this.#rejectTerminalSaves = true;
+  }
+
+  allowTerminalSaves(): void {
+    this.#rejectTerminalSaves = false;
+  }
+
+  terminalSaveFailureCount(): number {
+    return this.#terminalSaveFailureCount;
   }
 
   load(sessionId: string): Promise<CapabilityLiveSessionSnapshot | null> {
@@ -321,8 +335,14 @@ class TransientFailureLiveSessionStore implements CapabilityLiveSessionStore {
       this.#failNextSave = false;
       throw new Error("transient live-session store failure");
     }
-    if (this.#terminalSaveFailuresRemaining > 0 && snapshot.terminalTurns.length > 0) {
-      this.#terminalSaveFailuresRemaining -= 1;
+    if (
+      snapshot.terminalTurns.length > 0 &&
+      (this.#rejectTerminalSaves || this.#terminalSaveFailuresRemaining > 0)
+    ) {
+      if (this.#terminalSaveFailuresRemaining > 0) {
+        this.#terminalSaveFailuresRemaining -= 1;
+      }
+      this.#terminalSaveFailureCount += 1;
       throw new Error("transient terminal-notification store failure");
     }
     await this.#delegate.save(snapshot);
@@ -403,17 +423,20 @@ describe("Capability live runnerd and Codex session", () => {
       sessionId: "session-live-terminal-store-retry",
     });
 
-    // Reject both the provider-notification save and the pump's best-effort
-    // failed-state save. The repaired queue must admit a final shutdown retry.
-    store.failNextTerminalSave(2);
+    // Reject every automatic terminal checkpoint, including the provider
+    // notification and the pump's best-effort failed-state save. The repaired
+    // queue must admit a final shutdown retry once storage recovers.
+    store.rejectTerminalSaves();
     await expect(session.sendMessage("finish after consecutive store failures")).rejects.toThrow(
       "transient terminal-notification store failure",
     );
-    await vi.waitFor(() => {
+    await vi.waitFor(async () => {
       expect(session.snapshot().status).toBe("failed");
+      expect(store.terminalSaveFailureCount()).toBeGreaterThanOrEqual(2);
+      expect((await store.load(session.id))?.terminalTurns).toEqual([]);
     });
-    expect((await store.load(session.id))?.terminalTurns).toEqual([]);
 
+    store.allowTerminalSaves();
     await expect(service.shutdown(session.id)).resolves.toBeUndefined();
     expect(await store.load(session.id)).toMatchObject({
       status: "failed",

@@ -311,15 +311,17 @@ it("binds a canonical runnerd terminal to the active provider turn", () => {
 it("preserves the provider turn assigned by a canonical runnerd start", () => {
   expect(
     rehydrateRunnerdTurnNotification(
-      { turn: { id: "provider-turn-1", status: "inProgress" } },
+      { provider: "codex", providerTurnId: "provider-turn-1" },
       "opened-thread-1",
       "temporary-transport-turn",
       "turn/started",
     ),
   ).toEqual({
+    provider: "codex",
+    providerTurnId: "provider-turn-1",
     threadId: "opened-thread-1",
     turnId: "provider-turn-1",
-    turn: { id: "provider-turn-1", status: "inProgress" },
+    turn: { id: "provider-turn-1" },
   });
 });
 

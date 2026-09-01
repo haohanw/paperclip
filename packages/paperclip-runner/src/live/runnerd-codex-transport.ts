@@ -627,12 +627,17 @@ export function rehydrateRunnerdTurnNotification(
   method: "turn/started" | "turn/completed",
 ): Record<string, unknown> {
   const rawTurn = record(rawParams.turn);
+  const providerTurnId =
+    typeof rawParams.providerTurnId === "string" && rawParams.providerTurnId.length > 0
+      ? rawParams.providerTurnId
+      : null;
   const rawTurnId =
-    typeof rawTurn.id === "string" && rawTurn.id.length > 0
+    providerTurnId ??
+    (typeof rawTurn.id === "string" && rawTurn.id.length > 0
       ? rawTurn.id
       : typeof rawParams.turnId === "string" && rawParams.turnId.length > 0
         ? rawParams.turnId
-        : activeTurnId;
+        : activeTurnId);
   const boundTurnId = method === "turn/completed" ? activeTurnId : rawTurnId;
   return {
     ...rawParams,
