@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { and, asc, desc, eq, gte, inArray, isNull, lt, max, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, max, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -157,7 +157,7 @@ import {
 } from "./remote-url-credentials.js";
 import { secretService } from "./secrets.js";
 import { toolAccessPolicyService } from "./tool-access-policy.js";
-import { readSignedToolArgumentsPayload } from "./tool-content-guards.js";
+import { readSignedToolArgumentsPayload, TOOL_ACTION_REQUEST_SIGNING_GRACE_MS } from "./tool-content-guards.js";
 import {
   effectiveToolProfileBindings,
   narrowestScopeBindings,
@@ -5358,6 +5358,9 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
     refreshOptions: {
       enableAllByDefault?: boolean;
       restoreDraftDefaults?: boolean;
+      /** Keep first managed OAuth discovery quarantined without changing generic draft refresh semantics. */
+      quarantineManagedOAuthDraft?: boolean;
+      skipDefaultProfileSync?: boolean;
       credentialHeaders?: Record<string, string>;
     } = {},
   ): Promise<ToolCatalogRefreshResult> {
@@ -5405,7 +5408,11 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
       : null;
     const quarantineOnRefresh = !refreshOptions.enableAllByDefault
       && shouldQuarantineNewEntries(connection)
-      && (connection.status === "active" || sourceTemplateKey === "posthog");
+      && (
+        connection.status === "active"
+        || sourceTemplateKey === "posthog"
+        || refreshOptions.quarantineManagedOAuthDraft === true
+      );
     const safeDefault = asRecord(connection.config).safeDefault === true;
     for (const descriptor of descriptors) {
       const riskLevel = classifyRisk(descriptor, sourceTemplateKey);
@@ -5521,20 +5528,22 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
     }
 
     const activeEntries = updatedEntries.filter((entry) => entry.status === "active");
-    await enableCatalogEntriesByDefault({
-      connection: updatedConnection,
-      newCatalogEntryIds: refreshOptions.enableAllByDefault
-        ? activeEntries.map((entry) => entry.id)
-        : activeEntries
-          .filter((entry) => {
-            const previous = existingByName.get(entry.toolName);
-            return !previous || previous.status === "quarantined";
-          })
-          .map((entry) => entry.id),
-      activeCatalogEntryIds: activeEntries.map((entry) => entry.id),
-      restoreDraftDefaults: refreshOptions.restoreDraftDefaults,
-      actor,
-    });
+    if (!refreshOptions.skipDefaultProfileSync) {
+      await enableCatalogEntriesByDefault({
+        connection: updatedConnection,
+        newCatalogEntryIds: refreshOptions.enableAllByDefault
+          ? activeEntries.map((entry) => entry.id)
+          : activeEntries
+            .filter((entry) => {
+              const previous = existingByName.get(entry.toolName);
+              return !previous || previous.status === "quarantined";
+            })
+            .map((entry) => entry.id),
+        activeCatalogEntryIds: activeEntries.map((entry) => entry.id),
+        restoreDraftDefaults: refreshOptions.restoreDraftDefaults,
+        actor,
+      });
+    }
     await audit({
       companyId: connection.companyId,
       connectionId: connection.id,
@@ -5566,7 +5575,11 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
       db
         .select()
         .from(toolActionRequests)
-        .where(and(eq(toolActionRequests.companyId, companyId), eq(toolActionRequests.status, "pending"))),
+        .where(and(
+          eq(toolActionRequests.companyId, companyId),
+          eq(toolActionRequests.status, "pending"),
+          isNotNull(toolActionRequests.signedArguments),
+        )),
       db
         .select()
         .from(toolInvocations)
@@ -10040,6 +10053,7 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
     connection: typeof toolConnections.$inferSelect;
     catalog: ToolCatalogEntry[];
     suggestedDefaults: ConnectToolAppResult["suggestedDefaults"];
+    activateQuarantined?: boolean;
     actor?: ActorInfo;
   }) {
     const installs = await db.select().from(toolConnectionInstalls).where(and(
@@ -10060,12 +10074,17 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
           )
         : [],
     );
-    const enabledCatalog = input.catalog.filter((entry) => entry.status === "active");
+    const enabledCatalog = input.catalog.filter((entry) =>
+      entry.status === "active" || (input.activateQuarantined === true && entry.status === "quarantined")
+    );
     const finished = await finishGalleryAppConnection(input.connection.companyId, input.connection.id, {
       enabledCatalogEntryIds: enabledCatalog.map((entry) => entry.id),
       askFirstCatalogEntryIds: enabledCatalog
         .filter((entry) => askFirstRiskLevels.has(entry.riskLevel))
         .map((entry) => entry.id),
+      reviewedCatalogEntryIds: input.activateQuarantined === true
+        ? enabledCatalog.filter((entry) => entry.status === "quarantined").map((entry) => entry.id)
+        : undefined,
       access,
     }, input.actor);
     if (installs.length === 0) {
@@ -10092,6 +10111,13 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
     // transient broker, database, or secret-store failure can retry safely.
     const stateRow = await validateOAuthState(input.state, input.actor);
     let connection = await getConnectionRow(stateRow.connectionId, stateRow.companyId);
+    // The connection lifecycle, not the incidental presence of its app profile,
+    // distinguishes setup from reauthorization. New connections and connections
+    // revived after removal are drafts until this callback completes. A profile
+    // may legitimately survive removal because an MCP gateway retains it, or be
+    // intentionally archived on an otherwise active connection; neither case
+    // should invert whether recommended defaults are rebuilt.
+    const shouldFinalizeManagedDefaults = connection.status === "draft";
     const sourceTemplateKey = typeof connection.config.sourceTemplateKey === "string" ? connection.config.sourceTemplateKey : null;
     const galleryEntry = sourceTemplateKey ? getConnectableAppDefinition(sourceTemplateKey) : null;
     const method = galleryEntry ? connectionMethodForConnection(galleryEntry, connection) : null;
@@ -10231,14 +10257,17 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
         },
       };
       [connection] = await tx.update(toolConnections).set({
-        status: "active",
-        enabled: true,
+        status: shouldFinalizeManagedDefaults ? "draft" : "active",
+        enabled: shouldFinalizeManagedDefaults ? false : true,
         authKind: "oauth",
         config: nextConfig,
         transportConfig: nextConfig,
         updatedAt: now(),
       }).where(eq(toolConnections.id, connection.id)).returning();
-      await tx.update(toolApplications).set({ status: "active", updatedAt: now() }).where(eq(toolApplications.id, connection.applicationId));
+      await tx.update(toolApplications).set({
+        status: shouldFinalizeManagedDefaults ? "draft" : "active",
+        updatedAt: now(),
+      }).where(eq(toolApplications.id, connection.applicationId));
       await syncCredentialBindings(connection, credentialSecretRefs, tx);
       const linkedInteractionKind = stateRow.interactionId
         ? await tx
@@ -10260,16 +10289,36 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
     });
     const refresh = await refreshCatalog(connection.id, input.actor, {
       enableAllByDefault: false,
+      quarantineManagedOAuthDraft: shouldFinalizeManagedDefaults,
+      skipDefaultProfileSync: true,
       credentialHeaders: { Authorization: `Bearer ${credentials.accessToken}` },
     });
+    const suggestedDefaults = recommendedDefaultsForApp(galleryEntry!, method.key);
+    const finished = shouldFinalizeManagedDefaults
+      ? await finishOAuthCatalogWithRecommendedDefaults({
+          connection,
+          catalog: refresh.catalog,
+          suggestedDefaults,
+          activateQuarantined: true,
+          actor: input.actor,
+        })
+      : null;
+    const activatedCatalogEntryIds = new Set(
+      shouldFinalizeManagedDefaults
+        ? refresh.catalog.filter((entry) => entry.status === "quarantined").map((entry) => entry.id)
+        : [],
+    );
+    const catalog = refresh.catalog.map((entry) =>
+      activatedCatalogEntryIds.has(entry.id) ? { ...entry, status: "active" as const } : entry
+    );
     const [application] = await db.select().from(toolApplications).where(eq(toolApplications.id, connection.applicationId));
     return {
       connectionId: connection.id,
       application: toApplication(application),
-      connection: refresh.connection,
-      catalog: refresh.catalog,
-      actions: groupedActions(refresh.catalog),
-      suggestedDefaults: recommendedDefaultsForApp(galleryEntry!, method.key),
+      connection: finished?.connection ?? refresh.connection,
+      catalog,
+      actions: groupedActions(catalog),
+      suggestedDefaults,
       auth: null,
     };
   }
@@ -12389,7 +12438,8 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
         // that window. Hide such a request from the queue, but do not cancel it —
         // cancelling here races the two-step create and makes the later approve
         // fail with action_not_pending. Only cancel a request that carries a
-        // signature we cannot verify (secret rotation or tampering).
+        // signature we cannot verify (secret rotation or tampering), or an
+        // unsigned row whose creator has exceeded the signing grace period.
         const unsignedRequestIds = new Set<string>();
         const invalidRequestIds: string[] = [];
         for (const request of requests) {
@@ -12399,7 +12449,11 @@ export function toolAccessService(db: Db, options: ToolAccessServiceOptions = {}
             continue;
           }
           if (request.signedArguments === null) {
-            unsignedRequestIds.add(request.id);
+            if (Date.now() - request.createdAt.getTime() >= TOOL_ACTION_REQUEST_SIGNING_GRACE_MS) {
+              invalidRequestIds.push(request.id);
+            } else {
+              unsignedRequestIds.add(request.id);
+            }
             continue;
           }
           let readable = false;
